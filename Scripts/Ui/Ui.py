@@ -16,6 +16,7 @@ class Ui:
         self.root.title("Macro Recorder")
         self.apply_dark_mode()
         self.root.after(100, self.load_cache)  # Delay loading cache to ensure macro_recorder is set
+        self.drag_data = None  # Initialize drag_data
 
     def create_widgets(self):
         self.main_frame = ctk.CTkFrame(self.root, border_width=0, fg_color="#2B2B2B")  # Set dark background
@@ -45,6 +46,9 @@ class Ui:
         self.visual_editor_canvas.pack(fill=ctk.BOTH, expand=True)
         self.visual_editor_canvas.bind("<Button-1>", self.add_block)
         self.visual_editor_canvas.bind("<Button-3>", self.show_context_menu)  # Bind right-click to show context menu
+        self.visual_editor_canvas.bind("<ButtonPress-1>", self.on_node_press)
+        self.visual_editor_canvas.bind("<B1-Motion>", self.on_node_motion)
+        self.visual_editor_canvas.bind("<ButtonRelease-1>", self.on_node_release)
 
         # Create context menu for right-click actions
         self.context_menu = Menu(self.root, tearoff=0)
@@ -93,6 +97,9 @@ class Ui:
         # Bind events or add controls as needed
         self.editor_canvas.bind("<Button-1>", self.add_block)
         self.editor_canvas.bind("<Button-3>", self.show_context_menu)  # Bind right-click to show context menu
+        self.editor_canvas.bind("<ButtonPress-1>", self.on_node_press)
+        self.editor_canvas.bind("<B1-Motion>", self.on_node_motion)
+        self.editor_canvas.bind("<ButtonRelease-1>", self.on_node_release)
 
     def add_block(self, event):
         if self.macro_recorder:
@@ -118,11 +125,42 @@ class Ui:
     def add_mouse_action(self):
         # Add a mouse action at the current mouse position
         x, y = self.visual_editor_canvas.winfo_pointerxy()
-        action = ("mouse", x, y, time.time())
+        action = ("mouse", int(x), int(y), time.time())  # Ensure coordinates are integers
         self.macro_recorder.macro.append(action)
         self.render_macro()
         self.update_macro_display(self.macro_recorder.macro)
         self.save_cache()
+
+    def on_node_press(self, event):
+        # Store the item and its initial position
+        items = self.visual_editor_canvas.find_closest(event.x, event.y)
+        if items:
+            self.drag_data = {"item": items[0], "x": event.x, "y": event.y}
+
+    def on_node_motion(self, event):
+        if self.drag_data:
+            # Move the item by the distance of the mouse movement
+            dx = event.x - self.drag_data["x"]
+            dy = event.y - self.drag_data["y"]
+            self.visual_editor_canvas.move(self.drag_data["item"], dx, dy)
+            if hasattr(self, 'editor_canvas'):
+                self.editor_canvas.move(self.drag_data["item"], dx, dy)
+            self.drag_data["x"] = event.x
+            self.drag_data["y"] = event.y
+
+    def on_node_release(self, event):
+        if self.drag_data:
+            # Update the macro recorder with the new position
+            item = self.drag_data["item"]
+            x, y = self.visual_editor_canvas.coords(item)[:2]
+            for action in self.macro_recorder.macro:
+                if action[0] == 'mouse' and (action[1], action[2]) == (self.drag_data["x"], self.drag_data["y"]):
+                    action = (action[0], int(x), int(y), action[3])  # Ensure coordinates are integers
+                    break
+            self.render_macro()
+            self.update_macro_display(self.macro_recorder.macro)
+            self.save_cache()
+            self.drag_data = None
 
     def render_macro(self):
         if not self.macro_recorder:
@@ -148,17 +186,17 @@ class Ui:
                     if hasattr(self, 'editor_canvas'):
                         self.editor_canvas.create_text(action[1], action[2] - 10, text=f"{i+1} ({delay:.2f}s)", fill="white")
             elif action[0] == 'key':
-                self.visual_editor_canvas.create_rectangle(action[1], action[2], action[1] + 100, action[2] + 50, fill="green", tags="block")
-                self.visual_editor_canvas.create_text(action[1] + 50, action[2] + 25, text=f"Key: {action[1]}", fill="white")
+                self.visual_editor_canvas.create_rectangle(50, 50, 150, 100, fill="green", tags="block")
+                self.visual_editor_canvas.create_text(100, 75, text=f"Key: {action[1]}", fill="white")
                 if hasattr(self, 'editor_canvas'):
-                    self.editor_canvas.create_rectangle(action[1], action[2], action[1] + 100, action[2] + 50, fill="green", tags="block")
-                    self.editor_canvas.create_text(action[1] + 50, action[2] + 25, text=f"Key: {action[1]}", fill="white")
+                    self.editor_canvas.create_rectangle(50, 50, 150, 100, fill="green", tags="block")
+                    self.editor_canvas.create_text(100, 75, text=f"Key: {action[1]}", fill="white")
                 # Display action order and delay
                 if i > 0:
                     delay = action[3] - self.macro_recorder.macro[i-1][3]
-                    self.visual_editor_canvas.create_text(action[1], action[2] - 10, text=f"{i+1} ({delay:.2f}s)", fill="white")
+                    self.visual_editor_canvas.create_text(100, 40, text=f"{i+1} ({delay:.2f}s)", fill="white")
                     if hasattr(self, 'editor_canvas'):
-                        self.editor_canvas.create_text(action[1], action[2] - 10, text=f"{i+1} ({delay:.2f}s)", fill="white")
+                        self.editor_canvas.create_text(100, 40, text=f"{i+1} ({delay:.2f}s)", fill="white")
         self.update_macro_display(self.macro_recorder.macro)  # Update text output
         with open(self.cache_file, "w") as f:
             json.dump(self.macro_recorder.macro, f)
