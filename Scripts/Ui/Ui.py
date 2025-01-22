@@ -37,7 +37,7 @@ class Ui:
         self.visual_editor_button = ctk.CTkButton(self.main_frame, text="Visual Editor", command=self.open_visual_editor, fg_color="#3B3B3B", border_width=0)
         self.visual_editor_button.pack(pady=10)
 
-        self.macro_display = ctk.CTkTextbox(self.main_frame, height=30, width=80, state='disabled', font=("Courier", 10), fg_color="#2B2B2B", border_width=0)
+        self.macro_display = ctk.CTkTextbox(self.main_frame, height=100, width=80, state='disabled', font=("Courier", 10), fg_color="#2B2B2B", border_width=0)
         self.macro_display.pack(pady=10, fill=ctk.BOTH, expand=True)
 
         # Directly add visual_editor_canvas to main_frame
