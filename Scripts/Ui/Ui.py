@@ -1,5 +1,5 @@
-from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget, QMenu, QAction, QGraphicsOpacityEffect, QFileDialog, QMessageBox, QGraphicsScene, QGraphicsView, QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsTextItem, QGraphicsItem
-from PyQt5.QtCore import QPropertyAnimation, QEasingCurve, Qt, QPointF
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget, QMenu, QAction, QGraphicsOpacityEffect, QFileDialog, QMessageBox, QGraphicsScene, QGraphicsView, QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsTextItem, QGraphicsItem, QSpinBox, QHBoxLayout  # Add this import
+from PyQt5.QtCore import QPropertyAnimation, QEasingCurve, Qt, QPointF, pyqtSlot
 from PyQt5.QtGui import QColor, QCursor, QPen, QBrush, QWheelEvent, QPainter  # Import QPainter
 import os
 import json
@@ -89,7 +89,27 @@ class Ui(QMainWindow):
 
         self.play_button = QPushButton("Play")
         self.play_button.clicked.connect(self.play_macro)
-        self.layout.addWidget(self.play_button)
+
+        # Add horizontal layout for play button and loop count
+        play_layout = QHBoxLayout()
+        self.layout.addLayout(play_layout)
+        
+        play_layout.addWidget(self.play_button)
+        
+        self.loop_count = QSpinBox()
+        self.loop_count.setMinimum(1)
+        self.loop_count.setMaximum(9999)
+        self.loop_count.setValue(1)
+        self.loop_count.setStyleSheet("""
+            QSpinBox {
+                background-color: #3B3B3B;
+                color: white;
+                border: 1px solid #3B3B3B;
+                border-radius: 5px;
+                padding: 5px;
+            }
+        """)
+        play_layout.addWidget(self.loop_count)
 
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self.save_macro)
@@ -155,7 +175,8 @@ class Ui(QMainWindow):
 
     def play_macro(self):
         if self.macro_recorder:
-            self.macro_recorder.play_macro()
+            loops = self.loop_count.value()
+            self.macro_recorder.play_macro(loops)
 
     def save_macro(self):
         if self.macro_recorder:
@@ -200,45 +221,100 @@ class Ui(QMainWindow):
 
     def render_macro(self):
         if not self.macro_recorder:
-            return  # Prevent AttributeError if macro_recorder is None
+            return
         self.visual_editor_scene.clear()
         last_pos = None
+        vertical_spacing = 50  # Space between nodes
+        current_y = 0
+        
         for i, action in enumerate(self.macro_recorder.macro):
-            if action[0] == 'mouse':
-                if last_pos:
-                    line = QGraphicsLineItem(last_pos[0], last_pos[1], action[1], action[2])
-                    line.setPen(QPen(QColor("blue"), 2))
-                    self.visual_editor_scene.addItem(line)
-                oval = DraggableEllipseItem(self, action[1] - 5, action[2] - 5, 10, 10)  # Pass the Ui instance
-                oval.old_x, oval.old_y = action[1], action[2]
-                self.visual_editor_scene.addItem(oval)
-                last_pos = (action[1], action[2])
-                # Display action order and delay
-                if i > 0:
-                    delay = action[3] - self.macro_recorder.macro[i-1][3]
-                    text = QGraphicsTextItem(f"{i+1} ({delay:.2f}s)")
-                    text.setDefaultTextColor(QColor("white"))
-                    text.setPos(action[1], action[2] - 15)
-                    self.visual_editor_scene.addItem(text)
-            elif action[0] == 'key':
-                rect = QGraphicsEllipseItem(50, 50, 100, 50)
-                rect.setBrush(QBrush(QColor("green")))
+            if action[0] == 'window_focus':
+                # Create window focus node
+                rect = QGraphicsEllipseItem(50, current_y - 15, 30, 30)
+                rect.setBrush(QBrush(QColor("#FF8C00")))  # Orange for window focus
                 rect.setPen(QPen(QColor("white"), 2))
                 self.visual_editor_scene.addItem(rect)
-                text = QGraphicsTextItem(f"Key: {action[1]}")
+                
+                # Add window title label
+                text = QGraphicsTextItem(f"{i+1}: Focus: {action[1][:30]}...")
                 text.setDefaultTextColor(QColor("white"))
-                text.setPos(75, 65)
+                text.setPos(90, current_y - 10)
                 self.visual_editor_scene.addItem(text)
-                # Display action order and delay
+                
+                current_y += vertical_spacing
+            elif action[0] in ('mouse', 'left_click', 'right_click', 'middle_click'):
+                # Create connecting line from previous action
+                if last_pos:
+                    line = QGraphicsLineItem(last_pos[0], last_pos[1], action[1], current_y)
+                    line.setPen(QPen(QColor("#4A90E2"), 2, Qt.SolidLine))
+                    self.visual_editor_scene.addItem(line)
+                
+                # Set colors for different action types
+                color_map = {
+                    'mouse': QColor("#4A90E2"),      # Blue
+                    'left_click': QColor("#2ECC71"), # Green
+                    'right_click': QColor("#E74C3C"),# Red
+                    'middle_click': QColor("#F39C12")# Orange
+                }
+                
+                color = color_map.get(action[0], QColor("#4A90E2"))
+                
+                # Create node
+                oval = DraggableEllipseItem(self, action[1] - 10, current_y - 10, 20, 20)
+                oval.setBrush(QBrush(color))
+                oval.setPen(QPen(QColor("white"), 2))
+                oval.old_x, oval.old_y = action[1], current_y
+                self.visual_editor_scene.addItem(oval)
+                
+                # Add action label
+                label = QGraphicsTextItem(f"{i+1}: {action[0]}")
+                label.setDefaultTextColor(QColor("white"))
+                label.setPos(action[1] + 15, current_y - 10)
+                self.visual_editor_scene.addItem(label)
+                
+                # Add timing info
                 if i > 0:
                     delay = action[3] - self.macro_recorder.macro[i-1][3]
-                    text = QGraphicsTextItem(f"{i+1} ({delay:.2f}s)")
-                    text.setDefaultTextColor(QColor("white"))
-                    text.setPos(75, 40)
-                    self.visual_editor_scene.addItem(text)
-        self.update_macro_display(self.macro_recorder.macro)  # Update text output
-        with open(self.cache_file, "w") as f:
-            json.dump(self.macro_recorder.macro, f)
+                    timing = QGraphicsTextItem(f"{delay:.2f}s")
+                    timing.setDefaultTextColor(QColor("#95A5A6"))
+                    timing.setPos(action[1] - 50, current_y - 25)
+                    self.visual_editor_scene.addItem(timing)
+                
+                last_pos = (action[1], current_y)
+                current_y += vertical_spacing
+            
+            elif action[0] == 'key':
+                # Create key node
+                rect = QGraphicsEllipseItem(50, current_y - 15, 30, 30)
+                rect.setBrush(QBrush(QColor("#9B59B6")))  # Purple for keyboard actions
+                rect.setPen(QPen(QColor("white"), 2))
+                self.visual_editor_scene.addItem(rect)
+                
+                # Add key label
+                text = QGraphicsTextItem(f"{i+1}: Key {action[1]} {action[2]}")
+                text.setDefaultTextColor(QColor("white"))
+                text.setPos(90, current_y - 10)
+                self.visual_editor_scene.addItem(text)
+                
+                current_y += vertical_spacing
+
+        self.update_macro_display(self.macro_recorder.macro)
+        self.save_cache()
+
+    @pyqtSlot(list)
+    def update_macro_display(self, macro):
+        if not self.macro_recorder:
+            return
+        self.macro_display.setPlainText("")
+        for action in macro:
+            if action[0] == 'window_focus':
+                self.macro_display.append(f"Window Focus: {action[1]} at {action[3]:.2f}")
+            elif action[0] == 'mouse':
+                self.macro_display.append(f"Mouse: Move to ({action[1]}, {action[2]}) at {action[3]:.2f}")
+            elif action[0] in ('left_click', 'right_click', 'middle_click'):
+                self.macro_display.append(f"Mouse: {action[0]} at ({action[1]}, {action[2]}) at {action[3]:.2f}")
+            elif action[0] == 'key':
+                self.macro_display.append(f"Key: {action[1]} {action[2]} at {action[3]:.2f}")
 
     def load_cache(self):
         if os.path.exists(self.cache_file) and self.macro_recorder:
@@ -246,13 +322,18 @@ class Ui(QMainWindow):
                 self.macro_recorder.macro = json.load(f)
             self.update_macro_display(self.macro_recorder.macro)
 
+    @pyqtSlot(list)
     def update_macro_display(self, macro):
         if not self.macro_recorder:
-            return  # Prevent AttributeError if macro_recorder is None
+            return
         self.macro_display.setPlainText("")
         for action in macro:
             if action[0] == 'mouse':
                 self.macro_display.append(f"Mouse: Move to ({action[1]}, {action[2]}) at {action[3]:.2f}")
+            elif action[0] == 'left_click':
+                self.macro_display.append(f"Mouse: Left Click at ({action[1]}, {action[2]}) at {action[3]:.2f}")
+            elif action[0] == 'right_click':
+                self.macro_display.append(f"Mouse: Right Click at ({action[1]}, {action[2]}) at {action[3]:.2f}")
             elif action[0] == 'key':
                 self.macro_display.append(f"Key: {action[1]} {action[2]} at {action[3]:.2f}")
 
