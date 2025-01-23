@@ -3,6 +3,7 @@ import time
 import keyboard
 import threading
 import json
+from PyQt5.QtCore import QTimer
 
 class MacroRecorder:
     def __init__(self, ui):
@@ -10,16 +11,18 @@ class MacroRecorder:
         self.recording = False
         self.macro = []
         self.playing = False
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.record_step)
         pyautogui.MINIMUM_DURATION = 0  # Remove minimum sleep time
         pyautogui.PAUSE = 0  # Remove delays between actions
 
     def toggle_record(self):
         self.recording = not self.recording
         if self.recording:
-            self.ui.record_button.configure(text="Stop")
+            self.ui.record_button.setText("Stop")
             self.start_recording()
         else:
-            self.ui.record_button.configure(text="Record")
+            self.ui.record_button.setText("Record")
             keyboard.unhook_all()
             self.ui.save_cache()
 
@@ -27,7 +30,7 @@ class MacroRecorder:
         self.macro = []
         self.ui.update_macro_display(self.macro)
         keyboard.hook(self.record_key)
-        self.record_step()
+        self.timer.start(10)  # Schedule record_step every 10 ms
 
     def record_step(self):
         if self.recording:
@@ -35,7 +38,6 @@ class MacroRecorder:
             if not self.macro or (self.macro[-1][1], self.macro[-1][2]) != (x, y):
                 self.macro.append(('mouse', x, y, time.time()))
                 self.ui.update_macro_display(self.macro)
-            self.ui.root.after(10, self.record_step)
 
     def record_key(self, event):
         if self.recording:

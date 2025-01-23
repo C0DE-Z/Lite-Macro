@@ -1,72 +1,156 @@
-import customtkinter as ctk
-from tkinterdnd2 import TkinterDnD, DND_FILES
-from Scripts.FileHandler.Files import FileHandler
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget, QMenu, QAction, QGraphicsOpacityEffect, QFileDialog, QMessageBox, QGraphicsScene, QGraphicsView, QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsTextItem, QGraphicsItem
+from PyQt5.QtCore import QPropertyAnimation, QEasingCurve, Qt, QPointF
+from PyQt5.QtGui import QColor, QCursor, QPen, QBrush, QWheelEvent, QPainter  # Import QPainter
 import os
 import json
-import time  # Ensure this import is at the top
-from tkinter import Canvas, Menu  # Import standard tkinter Canvas and Menu
+import time
 
-class Ui:
-    def __init__(self, root, macro_recorder):
-        self.root = root
+class DraggableEllipseItem(QGraphicsEllipseItem):
+    def __init__(self, ui, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ui = ui
+        self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable)
+        self.setBrush(QBrush(QColor("blue")))
+        self.setPen(QPen(QColor("white"), 2))
+        self.old_x, self.old_y = 0, 0
+
+    def mousePressEvent(self, event):
+        self.old_x, self.old_y = self.pos().x(), self.pos().y()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self.update_position()
+
+    def update_position(self):
+        x, y = self.pos().x(), self.pos().y()
+        for action in self.ui.macro_recorder.macro:
+            if action[0] == 'mouse' and (action[1], action[2]) == [self.old_x, self.old_y]:
+                action[1], action[2] = int(x), int(y)
+                break
+        self.old_x, self.old_y = int(x), int(y)
+        self.ui.render_macro()
+
+class Ui(QMainWindow):
+    def __init__(self, macro_recorder):
+        super().__init__()
         self.macro_recorder = macro_recorder
-        self.file_handler = FileHandler()
         self.cache_file = "macro_cache.json"
-        self.create_widgets()
-        self.root.title("Macro Recorder")
-        self.apply_dark_mode()
-        self.root.after(100, self.load_cache)  # Delay loading cache to ensure macro_recorder is set
+        self.init_ui()
+        self.setWindowTitle("Macro Recorder")
+        self.load_cache()
         self.drag_data = None  # Initialize drag_data
+        self.connecting_line = None  # Initialize connecting line
 
-    def create_widgets(self):
-        self.main_frame = ctk.CTkFrame(self.root, border_width=0, fg_color="#2B2B2B")  # Set dark background
-        self.main_frame.pack(fill=ctk.BOTH, expand=True, padx=20, pady=20)
+    def init_ui(self):
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #1E1E1E;
+            }
+            QPushButton {
+                background-color: #3B3B3B;
+                color: white;
+                border: 1px solid #3B3B3B;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            QPushButton:hover {
+                background-color: #505050;
+                border: 1px solid #505050;
+            }
+            QPushButton:pressed {
+                background-color: #2B2B2B;
+                border: 1px solid #2B2B2B;
+            }
+            QTextEdit {
+                background-color: #2B2B2B;
+                color: white;
+                font-family: Courier;
+                border: 1px solid #3B3B3B;
+                border-radius: 5px;
+            }
+            QMenu {
+                background-color: #2B2B2B;
+                color: white;
+                border: 1px solid #3B3B3B;
+            }
+            QMenu::item:selected {
+                background-color: #505050;
+            }
+        """)
 
-        self.record_button = ctk.CTkButton(self.main_frame, text="Record", command=self.toggle_record, fg_color="#3B3B3B", border_width=0)
-        self.record_button.pack(pady=10)
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QVBoxLayout(self.central_widget)
 
-        self.play_button = ctk.CTkButton(self.main_frame, text="Play", command=self.play_macro, fg_color="#3B3B3B", border_width=0)
-        self.play_button.pack(pady=10)
+        self.record_button = QPushButton("Record")
+        self.record_button.clicked.connect(self.toggle_record)
+        self.layout.addWidget(self.record_button)
 
-        self.save_button = ctk.CTkButton(self.main_frame, text="Save", command=self.save_macro, fg_color="#3B3B3B", border_width=0)
-        self.save_button.pack(pady=10)
+        self.play_button = QPushButton("Play")
+        self.play_button.clicked.connect(self.play_macro)
+        self.layout.addWidget(self.play_button)
 
-        self.load_button = ctk.CTkButton(self.main_frame, text="Load", command=self.load_macro, fg_color="#3B3B3B", border_width=0)
-        self.load_button.pack(pady=10)
+        self.save_button = QPushButton("Save")
+        self.save_button.clicked.connect(self.save_macro)
+        self.layout.addWidget(self.save_button)
 
-        # Add Visual Editor button
-        self.visual_editor_button = ctk.CTkButton(self.main_frame, text="Visual Editor", command=self.open_visual_editor, fg_color="#3B3B3B", border_width=0)
-        self.visual_editor_button.pack(pady=10)
+        self.load_button = QPushButton("Load")
+        self.load_button.clicked.connect(self.load_macro)
+        self.layout.addWidget(self.load_button)
 
-        self.macro_display = ctk.CTkTextbox(self.main_frame, height=100, width=80, state='disabled', font=("Courier", 10), fg_color="#2B2B2B", border_width=0)
-        self.macro_display.pack(pady=10, fill=ctk.BOTH, expand=True)
+        self.macro_display = QTextEdit()
+        self.macro_display.setReadOnly(True)
+        self.layout.addWidget(self.macro_display)
 
-        # Directly add visual_editor_canvas to main_frame
-        self.visual_editor_canvas = Canvas(self.main_frame, bg="#2B2B2B", borderwidth=0, highlightthickness=0)  # Use standard tkinter Canvas
-        self.visual_editor_canvas.pack(fill=ctk.BOTH, expand=True)
-        self.visual_editor_canvas.bind("<Button-1>", self.add_block)
-        self.visual_editor_canvas.bind("<Button-3>", self.show_context_menu)  # Bind right-click to show context menu
-        self.visual_editor_canvas.bind("<ButtonPress-1>", self.on_node_press)
-        self.visual_editor_canvas.bind("<B1-Motion>", self.on_node_motion)
-        self.visual_editor_canvas.bind("<ButtonRelease-1>", self.on_node_release)
+        self.visual_editor_scene = QGraphicsScene()
+        self.visual_editor_view = QGraphicsView(self.visual_editor_scene)
+        self.visual_editor_view.setStyleSheet("background-color: #2B2B2B;")
+        self.visual_editor_view.setRenderHint(QPainter.Antialiasing)
+        self.visual_editor_view.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.visual_editor_view.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.layout.addWidget(self.visual_editor_view)
 
-        # Create context menu for right-click actions
-        self.context_menu = Menu(self.root, tearoff=0)
-        self.context_menu.add_command(label="Add Keystroke", command=self.add_keystroke)
-        self.context_menu.add_command(label="Add Mouse Action", command=self.add_mouse_action)
+        self.context_menu = QMenu(self)
+        self.add_keystroke_action = QAction("Add Keystroke", self)
+        self.add_keystroke_action.triggered.connect(self.add_keystroke_action_triggered)
+        self.context_menu.addAction(self.add_keystroke_action)
 
-        # Only call render_macro if macro_recorder is set
-        if self.macro_recorder:
+        self.add_mouse_action = QAction("Add Mouse Action", self)
+        self.add_mouse_action.triggered.connect(self.add_mouse_action_triggered)
+        self.context_menu.addAction(self.add_mouse_action)
+
+        self.remove_node_action = QAction("Remove Node", self)
+        self.remove_node_action.triggered.connect(self.remove_node)
+        self.context_menu.addAction(self.remove_node_action)
+
+        self.visual_editor_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.visual_editor_view.customContextMenuRequested.connect(self.show_context_menu)
+
+        self.visual_editor_view.setInteractive(True)
+        self.visual_editor_view.setDragMode(QGraphicsView.RubberBandDrag)
+        self.visual_editor_view.setMouseTracking(True)
+        self.visual_editor_view.setRenderHint(QPainter.Antialiasing)
+
+    def wheelEvent(self, event: QWheelEvent):
+        if event.modifiers() == Qt.ControlModifier:
+            factor = 1.2 if event.angleDelta().y() > 0 else 1 / 1.2
+            self.visual_editor_view.scale(factor, factor)
+        else:
+            super().wheelEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Delete:
+            for item in self.visual_editor_scene.selectedItems():
+                if isinstance(item, DraggableEllipseItem):
+                    self.visual_editor_scene.removeItem(item)
+                    self.macro_recorder.macro = [action for action in self.macro_recorder.macro if not (action[1] == item.old_x and action[2] == item.old_y)]
             self.render_macro()
-
-    def apply_dark_mode(self):
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("dark-blue")
-        # Removed CTkStyle usage
 
     def toggle_record(self):
         if self.macro_recorder:
             self.macro_recorder.toggle_record()
+            self.render_macro()  # Ensure the visual editor updates when recording stops
             self.save_cache()
 
     def play_macro(self):
@@ -83,120 +167,75 @@ class Ui:
             self.macro_recorder.load_macro()
             self.save_cache()
 
-    def open_visual_editor(self):
-        # Implement the functionality to open the visual editor
-        visual_editor_window = ctk.CTkToplevel(self.root)
-        visual_editor_window.title("Visual Editor")
-        visual_editor_window.geometry("600x400")
-        visual_editor_window.configure(bg="#2B2B2B")
-
-        # Add widgets to the visual editor window
-        self.editor_canvas = Canvas(visual_editor_window, bg="#2B2B2B", borderwidth=0, highlightthickness=0)  # Use standard tkinter Canvas
-        self.editor_canvas.pack(fill=ctk.BOTH, expand=True, padx=10, pady=10)
-
-        # Bind events or add controls as needed
-        self.editor_canvas.bind("<Button-1>", self.add_block)
-        self.editor_canvas.bind("<Button-3>", self.show_context_menu)  # Bind right-click to show context menu
-        self.editor_canvas.bind("<ButtonPress-1>", self.on_node_press)
-        self.editor_canvas.bind("<B1-Motion>", self.on_node_motion)
-        self.editor_canvas.bind("<ButtonRelease-1>", self.on_node_release)
-
-    def add_block(self, event):
-        if self.macro_recorder:
-            block_type = "mouse" if event.y % 2 == 0 else "key"
-            action = (block_type, event.x, event.y, time.time())  # Ensure 'time' is defined
-            self.macro_recorder.macro.append(action)
-            self.render_macro()
-            self.update_macro_display(self.macro_recorder.macro)  # Update text output
-            self.save_cache()
-
-    def show_context_menu(self, event):
-        self.context_menu.post(event.x_root, event.y_root)
-
-    def add_keystroke(self):
+    def add_keystroke_action_triggered(self):
         # Add a keystroke action at the current mouse position
-        x, y = self.visual_editor_canvas.winfo_pointerxy()
-        action = ("key", "a", "down", time.time())  # Example keystroke action
+        x, y = self.visual_editor_view.mapFromGlobal(QCursor.pos()).x(), self.visual_editor_view.mapFromGlobal(QCursor.pos()).y()
+        action = ["key", "a", "down", time.time()]  # Example keystroke action
         self.macro_recorder.macro.append(action)
         self.render_macro()
         self.update_macro_display(self.macro_recorder.macro)
         self.save_cache()
 
-    def add_mouse_action(self):
+    def add_mouse_action_triggered(self):
         # Add a mouse action at the current mouse position
-        x, y = self.visual_editor_canvas.winfo_pointerxy()
-        action = ("mouse", int(x), int(y), time.time())  # Ensure coordinates are integers
+        x, y = self.visual_editor_view.mapFromGlobal(QCursor.pos()).x(), self.visual_editor_view.mapFromGlobal(QCursor.pos()).y()
+        action = ["mouse", int(x), int(y), time.time()]  # Ensure coordinates are integers
         self.macro_recorder.macro.append(action)
         self.render_macro()
         self.update_macro_display(self.macro_recorder.macro)
         self.save_cache()
 
-    def on_node_press(self, event):
-        # Store the item and its initial position
-        items = self.visual_editor_canvas.find_closest(event.x, event.y)
-        if items:
-            self.drag_data = {"item": items[0], "x": event.x, "y": event.y}
-
-    def on_node_motion(self, event):
+    def remove_node(self):
         if self.drag_data:
-            # Move the item by the distance of the mouse movement
-            dx = event.x - self.drag_data["x"]
-            dy = event.y - self.drag_data["y"]
-            self.visual_editor_canvas.move(self.drag_data["item"], dx, dy)
-            if hasattr(self, 'editor_canvas'):
-                self.editor_canvas.move(self.drag_data["item"], dx, dy)
-            self.drag_data["x"] = event.x
-            self.drag_data["y"] = event.y
-
-    def on_node_release(self, event):
-        if self.drag_data:
-            # Update the macro recorder with the new position
             item = self.drag_data["item"]
-            x, y = self.visual_editor_canvas.coords(item)[:2]
-            for action in self.macro_recorder.macro:
-                if action[0] == 'mouse' and (action[1], action[2]) == (self.drag_data["x"], self.drag_data["y"]):
-                    action = (action[0], int(x), int(y), action[3])  # Ensure coordinates are integers
-                    break
+            x, y = item.pos().x(), item.pos().y()
+            self.macro_recorder.macro = [action for action in self.macro_recorder.macro if not (action[1] == int(x) and action[2] == int(y))]
             self.render_macro()
             self.update_macro_display(self.macro_recorder.macro)
             self.save_cache()
             self.drag_data = None
 
+    def show_context_menu(self, pos):
+        self.context_menu.exec_(self.visual_editor_view.mapToGlobal(pos))
+
     def render_macro(self):
         if not self.macro_recorder:
             return  # Prevent AttributeError if macro_recorder is None
-        self.visual_editor_canvas.delete("all")
-        if hasattr(self, 'editor_canvas'):
-            self.editor_canvas.delete("all")
+        self.visual_editor_scene.clear()
         last_pos = None
         for i, action in enumerate(self.macro_recorder.macro):
             if action[0] == 'mouse':
                 if last_pos:
-                    self.visual_editor_canvas.create_line(last_pos[0], last_pos[1], action[1], action[2], fill="blue", width=2)
-                    if hasattr(self, 'editor_canvas'):
-                        self.editor_canvas.create_line(last_pos[0], last_pos[1], action[1], action[2], fill="blue", width=2)
-                self.visual_editor_canvas.create_oval(action[1] - 5, action[2] - 5, action[1] + 5, action[2] + 5, fill="blue", tags="block")
-                if hasattr(self, 'editor_canvas'):
-                    self.editor_canvas.create_oval(action[1] - 5, action[2] - 5, action[1] + 5, action[2] + 5, fill="blue", tags="block")
+                    line = QGraphicsLineItem(last_pos[0], last_pos[1], action[1], action[2])
+                    line.setPen(QPen(QColor("blue"), 2))
+                    self.visual_editor_scene.addItem(line)
+                oval = DraggableEllipseItem(self, action[1] - 5, action[2] - 5, 10, 10)  # Pass the Ui instance
+                oval.old_x, oval.old_y = action[1], action[2]
+                self.visual_editor_scene.addItem(oval)
                 last_pos = (action[1], action[2])
                 # Display action order and delay
                 if i > 0:
                     delay = action[3] - self.macro_recorder.macro[i-1][3]
-                    self.visual_editor_canvas.create_text(action[1], action[2] - 10, text=f"{i+1} ({delay:.2f}s)", fill="white")
-                    if hasattr(self, 'editor_canvas'):
-                        self.editor_canvas.create_text(action[1], action[2] - 10, text=f"{i+1} ({delay:.2f}s)", fill="white")
+                    text = QGraphicsTextItem(f"{i+1} ({delay:.2f}s)")
+                    text.setDefaultTextColor(QColor("white"))
+                    text.setPos(action[1], action[2] - 15)
+                    self.visual_editor_scene.addItem(text)
             elif action[0] == 'key':
-                self.visual_editor_canvas.create_rectangle(50, 50, 150, 100, fill="green", tags="block")
-                self.visual_editor_canvas.create_text(100, 75, text=f"Key: {action[1]}", fill="white")
-                if hasattr(self, 'editor_canvas'):
-                    self.editor_canvas.create_rectangle(50, 50, 150, 100, fill="green", tags="block")
-                    self.editor_canvas.create_text(100, 75, text=f"Key: {action[1]}", fill="white")
+                rect = QGraphicsEllipseItem(50, 50, 100, 50)
+                rect.setBrush(QBrush(QColor("green")))
+                rect.setPen(QPen(QColor("white"), 2))
+                self.visual_editor_scene.addItem(rect)
+                text = QGraphicsTextItem(f"Key: {action[1]}")
+                text.setDefaultTextColor(QColor("white"))
+                text.setPos(75, 65)
+                self.visual_editor_scene.addItem(text)
                 # Display action order and delay
                 if i > 0:
                     delay = action[3] - self.macro_recorder.macro[i-1][3]
-                    self.visual_editor_canvas.create_text(100, 40, text=f"{i+1} ({delay:.2f}s)", fill="white")
-                    if hasattr(self, 'editor_canvas'):
-                        self.editor_canvas.create_text(100, 40, text=f"{i+1} ({delay:.2f}s)", fill="white")
+                    text = QGraphicsTextItem(f"{i+1} ({delay:.2f}s)")
+                    text.setDefaultTextColor(QColor("white"))
+                    text.setPos(75, 40)
+                    self.visual_editor_scene.addItem(text)
         self.update_macro_display(self.macro_recorder.macro)  # Update text output
         with open(self.cache_file, "w") as f:
             json.dump(self.macro_recorder.macro, f)
@@ -210,20 +249,27 @@ class Ui:
     def update_macro_display(self, macro):
         if not self.macro_recorder:
             return  # Prevent AttributeError if macro_recorder is None
-        self.macro_display.configure(state='normal')
-        self.macro_display.delete("1.0", ctk.END)
+        self.macro_display.setPlainText("")
         for action in macro:
             if action[0] == 'mouse':
-                self.macro_display.insert(ctk.END, f"Mouse: Move to ({action[1]}, {action[2]}) at {action[3]:.2f}\n")
+                self.macro_display.append(f"Mouse: Move to ({action[1]}, {action[2]}) at {action[3]:.2f}")
             elif action[0] == 'key':
-                self.macro_display.insert(ctk.END, f"Key: {action[1]} {action[2]} at {action[3]:.2f}\n")
-        self.macro_display.configure(state='disabled')
+                self.macro_display.append(f"Key: {action[1]} {action[2]} at {action[3]:.2f}")
 
     def ask_open_file(self):
-        return self.file_handler.ask_open_file()
+        return QFileDialog.getOpenFileName(self, "Open Macro Script", ".", "Macro Script (*.MacroScript)")[0]
+
+    def ask_save_file(self):
+        return QFileDialog.getSaveFileName(self, "Save Macro Script", ".", "Macro Script (*.MacroScript)")[0]
+
+    def show_info(self, message):
+        QMessageBox.information(self, "Info", message)
+
+    def show_warning(self, message):
+        QMessageBox.warning(self, "Warning", message)
 
     def show_error(self, message):
-        self.file_handler.show_error(message)
+        QMessageBox.critical(self, "Error", message)
 
     def save_cache(self):
         with open(self.cache_file, "w") as f:
